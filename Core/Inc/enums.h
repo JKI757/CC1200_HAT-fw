@@ -59,7 +59,7 @@ enum int_state_t
 	STATE_TX_FIFO_ERR
 };
 
-const char *errstrings[5]=
+static const char * const errstrings[5]=
 {
 	"OK",
 	"PLL did not lock",
