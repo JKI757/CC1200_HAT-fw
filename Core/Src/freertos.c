@@ -38,7 +38,7 @@
 
 /* USER CODE END Includes */
 
-#define ENABLE_DEBUG_BASEBAND_TASK 1
+#define ENABLE_DEBUG_BASEBAND_TASK 0
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
@@ -157,8 +157,8 @@ void MX_FREERTOS_Init(void) {
   /* Create the thread(s) */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
   interfaceTaskHandle = osThreadNew(StartInterfaceTask, NULL, &interfaceTask_attributes);
-  // basebandTaskHandle = osThreadNew(StartBasebandTask, NULL, &basebandTask_attributes);
-#ifdef ENABLE_DEBUG_BASEBAND_TASK
+  basebandTaskHandle = osThreadNew(StartBasebandTask, NULL, &basebandTask_attributes);
+#if ENABLE_DEBUG_BASEBAND_TASK
   debugBasebandTaskHandle = osThreadNew(StartDebugBasebandTask, NULL, &debugBasebandTask_attributes);
 #endif
 
@@ -189,7 +189,7 @@ void StartDefaultTask(void *argument)
   {
     LL_IWDG_ReloadCounter(IWDG);
     osDelay(100);
-    // HAL_GPIO_TogglePin(SVC_LED_GPIO_Port,SVC_LED_Pin);
+    HAL_GPIO_TogglePin(SVC_LED_GPIO_Port,SVC_LED_Pin);
 
   }
   /* USER CODE END StartDefaultTask */
@@ -479,7 +479,7 @@ void StartBasebandTask(void *argument)
 
 void StartDebugBasebandTask(void *argument)
 {
-#ifdef ENABLE_DEBUG_BASEBAND_TASK
+#if ENABLE_DEBUG_BASEBAND_TASK
   (void)argument;
   static const int8_t debug_frame[] = {
     0x55, -0x55, 0x2A, -0x2A, 0x40, -0x40, 0x10, -0x10,
