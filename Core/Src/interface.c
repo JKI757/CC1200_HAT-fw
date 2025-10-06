@@ -8,6 +8,7 @@
 #include "usart.h"
 #include "gpio.h"
 #include "usbd_cdc_if.h"
+extern USBD_HandleTypeDef hUsbDeviceFS;
 #include "cmsis_os.h"
 
 volatile uint8_t rxb[100] = {0};
@@ -24,18 +25,21 @@ volatile enum interface_comm_t interface_comm = COMM_IDLE;
 static interface_transport_t active_transport = INTERFACE_TRANSPORT_NONE;
 static uint8_t transport_locked = 0U;
 static uint8_t usb_pending_buffer[200];
-static uint8_t usb_tx_buffer[APP_TX_DATA_SIZE];
+static uint8_t usb_tx_buffer[CDC_PORT_COUNT][APP_TX_DATA_SIZE];
 static uint32_t usb_pending_len = 0U;
+static uint8_t usb_dtr_mask = 0U;
 
 static HAL_StatusTypeDef uart_tx_it(uint8_t *buffer, uint16_t size);
 static HAL_StatusTypeDef uart_rx_it(uint8_t *buffer, uint16_t size);
 static HAL_StatusTypeDef uart_abort_rx(void);
-static HAL_StatusTypeDef usb_tx_it(uint8_t *buffer, uint16_t size);
+static HAL_StatusTypeDef usb_tx_port(uint8_t port, uint8_t *buffer, uint16_t size);
+static uint8_t interface_usb_port_ready(uint8_t port);
 
 static void interface_reset_state(void);
 static void interface_start_timeout(void);
 static void interface_activate_transport(interface_transport_t transport);
-static void interface_process_byte(uint8_t byte, interface_transport_t source);
+static void interface_process_command_byte(uint8_t byte);
+static void interface_process_baseband_byte(uint8_t byte);
 static void interface_queue_usb_pending(const uint8_t *buf, uint32_t len);
 static void interface_consume_usb_pending(void);
 
@@ -67,14 +71,23 @@ HAL_StatusTypeDef interface_receive_it(uint8_t *buffer, uint16_t size)
   return uart_rx_it(buffer, size);
 }
 
-HAL_StatusTypeDef interface_transmit_it(uint8_t *buffer, uint16_t size)
+HAL_StatusTypeDef interface_transmit_command(uint8_t *buffer, uint16_t size)
 {
   if (active_transport == INTERFACE_TRANSPORT_USB_CDC)
   {
-    return usb_tx_it(buffer, size);
+    return usb_tx_port(0U, buffer, size);
   }
 
   return uart_tx_it(buffer, size);
+}
+
+HAL_StatusTypeDef interface_transmit_baseband(uint8_t *buffer, uint16_t size)
+{
+  if (active_transport == INTERFACE_TRANSPORT_USB_CDC && interface_usb_port_ready(1U))
+  {
+    return usb_tx_port(1U, buffer, size);
+  }
+  return HAL_BUSY;
 }
 
 HAL_StatusTypeDef interface_abort_receive_it(void)
@@ -114,7 +127,8 @@ void interface_handle_gpio_exti(uint16_t pin)
   }
 }
 
-void interface_usb_receive_callback(uint8_t *buf, uint32_t len)
+
+void interface_usb_receive_callback(uint8_t port, uint8_t *buf, uint32_t len)
 {
   interface_activate_transport(INTERFACE_TRANSPORT_USB_CDC);
 
@@ -123,27 +137,45 @@ void interface_usb_receive_callback(uint8_t *buf, uint32_t len)
     return;
   }
 
-  for (uint32_t i = 0; i < len; ++i)
+  if (port == 0U)
   {
-    interface_process_byte(buf[i], INTERFACE_TRANSPORT_USB_CDC);
-
-    if (trx_state != TRX_TX && interface_comm != COMM_IDLE)
+    for (uint32_t i = 0; i < len; ++i)
     {
-      if ((i + 1U) < len)
+      interface_process_command_byte(buf[i]);
+
+      if (trx_state != TRX_TX && interface_comm != COMM_IDLE)
       {
-        interface_queue_usb_pending(&buf[i + 1U], len - (i + 1U));
+        if ((i + 1U) < len)
+        {
+          interface_queue_usb_pending(&buf[i + 1U], len - (i + 1U));
+        }
+        break;
       }
-      break;
+    }
+  }
+  else
+  {
+    for (uint32_t i = 0; i < len; ++i)
+    {
+      interface_process_baseband_byte(buf[i]);
     }
   }
 }
 
-void interface_usb_line_state_changed(uint16_t state)
+
+void interface_usb_line_state_changed(uint8_t port, uint16_t state)
 {
-  /* DTR bit (bit0) indicates host connection */
-  if ((state & 0x0001U) != 0U)
+  if (port < CDC_PORT_COUNT)
   {
-    interface_activate_transport(INTERFACE_TRANSPORT_USB_CDC);
+    if ((state & 0x0001U) != 0U)
+    {
+      usb_dtr_mask |= (1U << port);
+      interface_activate_transport(INTERFACE_TRANSPORT_USB_CDC);
+    }
+    else
+    {
+      usb_dtr_mask &= (uint8_t)~(1U << port);
+    }
   }
 }
 
@@ -166,16 +198,21 @@ static HAL_StatusTypeDef uart_abort_rx(void)
   return HAL_UART_AbortReceive_IT(&huart1);
 }
 
-static HAL_StatusTypeDef usb_tx_it(uint8_t *buffer, uint16_t size)
+static HAL_StatusTypeDef usb_tx_port(uint8_t port, uint8_t *buffer, uint16_t size)
 {
-  if (size > sizeof(usb_tx_buffer))
+  if (port >= CDC_PORT_COUNT || size > sizeof(usb_tx_buffer[0]))
   {
     return HAL_ERROR;
   }
 
-  memcpy(usb_tx_buffer, buffer, size);
+  memcpy(usb_tx_buffer[port], buffer, size);
 
-  uint8_t status = CDC_Transmit_FS(usb_tx_buffer, size);
+  if (USBD_CDC_SetTxBufferPort(&hUsbDeviceFS, port, usb_tx_buffer[port], size) != USBD_OK)
+  {
+    return HAL_ERROR;
+  }
+
+  uint8_t status = USBD_CDC_TransmitPacketPort(&hUsbDeviceFS, port);
   if (status == USBD_OK)
   {
     return HAL_OK;
@@ -185,6 +222,15 @@ static HAL_StatusTypeDef usb_tx_it(uint8_t *buffer, uint16_t size)
     return HAL_BUSY;
   }
   return HAL_ERROR;
+}
+
+static uint8_t interface_usb_port_ready(uint8_t port)
+{
+  if (port >= CDC_PORT_COUNT)
+  {
+    return 0U;
+  }
+  return (usb_dtr_mask & (1U << port)) != 0U;
 }
 
 static void interface_reset_state(void)
@@ -242,7 +288,7 @@ static void interface_activate_transport(interface_transport_t transport)
   }
 }
 
-static void interface_process_byte(uint8_t byte, interface_transport_t source)
+static void interface_process_command_byte(uint8_t byte)
 {
   if (trx_state != TRX_TX)
   {
@@ -260,27 +306,23 @@ static void interface_process_byte(uint8_t byte, interface_transport_t source)
     {
       rx_bc++;
       interface_start_timeout();
-
-      if (source == INTERFACE_TRANSPORT_UART)
-      {
-        uart_rx_it((uint8_t *)&rxb[rx_bc], 1U);
-      }
     }
     else
     {
       interface_comm = COMM_OVF;
     }
   }
-  else
-  {
-    if (source == INTERFACE_TRANSPORT_UART)
-    {
-      uart_rx_it((uint8_t *)rxb, 1U);
-    }
+}
 
-    tx_bsb_buff[tx_bsb_total_cnt % BSB_BUFLEN] = (int8_t)byte;
-    tx_bsb_total_cnt++;
+static void interface_process_baseband_byte(uint8_t byte)
+{
+  if (trx_state != TRX_TX)
+  {
+    return;
   }
+
+  tx_bsb_buff[tx_bsb_total_cnt % BSB_BUFLEN] = (int8_t)byte;
+  tx_bsb_total_cnt++;
 }
 
 static void interface_queue_usb_pending(const uint8_t *buf, uint32_t len)
@@ -311,7 +353,7 @@ static void interface_consume_usb_pending(void)
 
   while (idx < usb_pending_len)
   {
-    interface_process_byte(usb_pending_buffer[idx], INTERFACE_TRANSPORT_USB_CDC);
+    interface_process_command_byte(usb_pending_buffer[idx]);
     idx++;
 
     if (trx_state != TRX_TX && interface_comm != COMM_IDLE)
@@ -345,6 +387,7 @@ void interface_poll_pending(void)
 /* HAL callbacks                                                              */
 /* -------------------------------------------------------------------------- */
 
+
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance != USART1)
@@ -359,7 +402,19 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     return;
   }
 
-  interface_process_byte(rxb[rx_bc], INTERFACE_TRANSPORT_UART);
+  if (trx_state != TRX_TX)
+  {
+    interface_process_command_byte(rxb[rx_bc]);
+    if (interface_comm == COMM_IDLE)
+    {
+      uart_rx_it((uint8_t *)&rxb[rx_bc], 1U);
+    }
+  }
+  else
+  {
+    interface_process_baseband_byte(rxb[0]);
+    uart_rx_it((uint8_t *)rxb, 1U);
+  }
 }
 
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)

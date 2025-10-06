@@ -29,6 +29,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <stddef.h>
 #include "spi.h"
 #include "tim.h"
 #include "gpio.h"
@@ -36,6 +37,8 @@
 #include "iwdg.h"
 
 /* USER CODE END Includes */
+
+#define ENABLE_DEBUG_BASEBAND_TASK 1
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
@@ -77,6 +80,13 @@ const osThreadAttr_t basebandTask_attributes = {
   .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
+/* Definitions for debugBasebandTask */
+osThreadId_t debugBasebandTaskHandle;
+const osThreadAttr_t debugBasebandTask_attributes = {
+  .name = "dbgBaseband",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityNormal,
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -88,6 +98,7 @@ static void interface_send_blocking(uint8_t *buf, uint16_t len);
 void StartDefaultTask(void *argument);
 void StartInterfaceTask(void *argument);
 void StartBasebandTask(void *argument);
+void StartDebugBasebandTask(void *argument);
 
 extern void MX_USB_DEVICE_Init(void);
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
@@ -103,7 +114,7 @@ static void interface_send_blocking(uint8_t *buf, uint16_t len)
 {
   for (;;)
   {
-    HAL_StatusTypeDef status = interface_transmit_it(buf, len);
+    HAL_StatusTypeDef status = interface_transmit_command(buf, len);
     if (status == HAL_OK)
     {
       return;
@@ -146,7 +157,10 @@ void MX_FREERTOS_Init(void) {
   /* Create the thread(s) */
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
   interfaceTaskHandle = osThreadNew(StartInterfaceTask, NULL, &interfaceTask_attributes);
-  basebandTaskHandle = osThreadNew(StartBasebandTask, NULL, &basebandTask_attributes);
+  // basebandTaskHandle = osThreadNew(StartBasebandTask, NULL, &basebandTask_attributes);
+#ifdef ENABLE_DEBUG_BASEBAND_TASK
+  debugBasebandTaskHandle = osThreadNew(StartDebugBasebandTask, NULL, &debugBasebandTask_attributes);
+#endif
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -203,9 +217,9 @@ void StartInterfaceTask(void *argument)
       interface_abort_receive_it();
       interface_receive_it((uint8_t*)rxb, 1U);
       interface_comm = COMM_IDLE;
-      HAL_GPIO_WritePin(SVC_LED_GPIO_Port, SVC_LED_Pin, GPIO_PIN_SET);
-      osDelay(20);
-      HAL_GPIO_WritePin(SVC_LED_GPIO_Port, SVC_LED_Pin, GPIO_PIN_RESET);
+      // HAL_GPIO_WritePin(SVC_LED_GPIO_Port, SVC_LED_Pin, GPIO_PIN_SET);
+      // osDelay(20);
+      // HAL_GPIO_WritePin(SVC_LED_GPIO_Port, SVC_LED_Pin, GPIO_PIN_RESET);
 
       uint32_t freq = 0;
       uint8_t ident[128] = {0};
@@ -439,7 +453,7 @@ void StartBasebandTask(void *argument)
       HAL_SPI_TransmitReceive(&hspi1, &tmp, (uint8_t*)&rx_bsb_sample, 1, 2);
       for (;;)
       {
-        HAL_StatusTypeDef status = interface_transmit_it((uint8_t*)&rx_bsb_sample, 1U);
+        HAL_StatusTypeDef status = interface_transmit_baseband((uint8_t*)&rx_bsb_sample, 1U);
         if (status == HAL_OK)
         {
           break;
@@ -461,6 +475,45 @@ void StartBasebandTask(void *argument)
     osDelay(20);
   }
   /* USER CODE END StartBasebandTask */
+}
+
+void StartDebugBasebandTask(void *argument)
+{
+#ifdef ENABLE_DEBUG_BASEBAND_TASK
+  (void)argument;
+  static const int8_t debug_frame[] = {
+    0x55, -0x55, 0x2A, -0x2A, 0x40, -0x40, 0x10, -0x10,
+    0x7F, -0x7F, 0x30, -0x30, 0x00, 0x11, -0x11, 0x22
+  };
+
+  for(;;)
+  {
+    HAL_GPIO_TogglePin(SVC_LED_GPIO_Port,SVC_LED_Pin);
+
+    for (size_t i = 0; i < sizeof(debug_frame); ++i)
+    {
+      uint8_t sample = (uint8_t)debug_frame[i];
+      for (uint32_t attempt = 0; attempt < 100U; ++attempt)
+      {
+        HAL_StatusTypeDef status = interface_transmit_baseband(&sample, 1U);
+        if (status == HAL_OK)
+        {
+          break;
+        }
+        if (status == HAL_BUSY)
+        {
+          osDelay(5);
+          continue;
+        }
+        break;
+      }
+    }
+    osDelay(1000);
+  }
+#else
+  (void)argument;
+  osThreadExit();
+#endif
 }
 
 /* Private application code --------------------------------------------------*/

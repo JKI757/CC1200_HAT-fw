@@ -38,12 +38,13 @@ extern volatile enum interface_comm_t interface_comm;
 
 void interface_init(interface_transport_t transport);
 HAL_StatusTypeDef interface_receive_it(uint8_t *buffer, uint16_t size);
-HAL_StatusTypeDef interface_transmit_it(uint8_t *buffer, uint16_t size);
+HAL_StatusTypeDef interface_transmit_command(uint8_t *buffer, uint16_t size);
+HAL_StatusTypeDef interface_transmit_baseband(uint8_t *buffer, uint16_t size);
 HAL_StatusTypeDef interface_abort_receive_it(void);
 void interface_handle_period_elapsed(TIM_HandleTypeDef *htim);
 void interface_handle_gpio_exti(uint16_t pin);
-void interface_usb_receive_callback(uint8_t *buf, uint32_t len);
-void interface_usb_line_state_changed(uint16_t state);
+void interface_usb_receive_callback(uint8_t port, uint8_t *buf, uint32_t len);
+void interface_usb_line_state_changed(uint8_t port, uint16_t state);
 void interface_poll_pending(void);
 
 #ifdef __cplusplus

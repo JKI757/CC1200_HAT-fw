@@ -66,9 +66,10 @@
 #define USBD_LANGID_STRING     1033
 #define USBD_MANUFACTURER_STRING     "STMicroelectronics"
 #define USBD_PID_FS     22336
-#define USBD_PRODUCT_STRING_FS     "STM32 Virtual ComPort"
+#define USBD_PRODUCT_STRING_FS     "CC1200-M17 Dual CDC"
+#define USBD_INTERFACE_CMD_STRING_FS   "CC1200-M17-Modem-Command"
+#define USBD_INTERFACE_BB_STRING_FS    "CC1200-M17-Modem-Baseband"
 #define USBD_CONFIGURATION_STRING_FS     "CDC Config"
-#define USBD_INTERFACE_STRING_FS     "CDC Interface"
 
 #define USB_SIZ_BOS_DESC            0x0C
 
@@ -121,6 +122,7 @@ uint8_t * USBD_FS_ProductStrDescriptor(USBD_SpeedTypeDef speed, uint16_t *length
 uint8_t * USBD_FS_SerialStrDescriptor(USBD_SpeedTypeDef speed, uint16_t *length);
 uint8_t * USBD_FS_ConfigStrDescriptor(USBD_SpeedTypeDef speed, uint16_t *length);
 uint8_t * USBD_FS_InterfaceStrDescriptor(USBD_SpeedTypeDef speed, uint16_t *length);
+uint8_t * USBD_FS_UserStrDescriptor(USBD_SpeedTypeDef speed, uint8_t idx, uint16_t *length);
 #if (USBD_LPM_ENABLED == 1)
 uint8_t * USBD_FS_USR_BOSDescriptor(USBD_SpeedTypeDef speed, uint16_t *length);
 #endif /* (USBD_LPM_ENABLED == 1) */
@@ -143,6 +145,7 @@ USBD_DescriptorsTypeDef FS_Desc =
 , USBD_FS_SerialStrDescriptor
 , USBD_FS_ConfigStrDescriptor
 , USBD_FS_InterfaceStrDescriptor
+, USBD_FS_UserStrDescriptor
 #if (USBD_LPM_ENABLED == 1)
 , USBD_FS_USR_BOSDescriptor
 #endif /* (USBD_LPM_ENABLED == 1) */
@@ -354,15 +357,22 @@ uint8_t * USBD_FS_ConfigStrDescriptor(USBD_SpeedTypeDef speed, uint16_t *length)
   */
 uint8_t * USBD_FS_InterfaceStrDescriptor(USBD_SpeedTypeDef speed, uint16_t *length)
 {
-  if(speed == 0)
-  {
-    USBD_GetString((uint8_t *)USBD_INTERFACE_STRING_FS, USBD_StrDesc, length);
-  }
-  else
-  {
-    USBD_GetString((uint8_t *)USBD_INTERFACE_STRING_FS, USBD_StrDesc, length);
-  }
+  (void)speed;
+  USBD_GetString((uint8_t *)USBD_INTERFACE_CMD_STRING_FS, USBD_StrDesc, length);
   return USBD_StrDesc;
+}
+
+uint8_t * USBD_FS_UserStrDescriptor(USBD_SpeedTypeDef speed, uint8_t idx, uint16_t *length)
+{
+  (void)speed;
+  switch (idx)
+  {
+    case USBD_IDX_INTERFACE_STR + 1:
+      USBD_GetString((uint8_t *)USBD_INTERFACE_BB_STRING_FS, USBD_StrDesc, length);
+      return USBD_StrDesc;
+    default:
+      return NULL;
+  }
 }
 
 #if (USBD_LPM_ENABLED == 1)

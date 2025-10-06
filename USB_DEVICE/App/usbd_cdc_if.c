@@ -31,12 +31,20 @@
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-static USBD_CDC_LineCodingTypeDef line_coding =
+static USBD_CDC_LineCodingTypeDef line_coding[CDC_PORT_COUNT] =
 {
-  .bitrate    = 460800,
-  .format     = 0x00,
-  .paritytype = 0x00,
-  .datatype   = 0x08
+  {
+    .bitrate    = 460800,
+    .format     = 0x00,
+    .paritytype = 0x00,
+    .datatype   = 0x08
+  },
+  {
+    .bitrate    = 460800,
+    .format     = 0x00,
+    .paritytype = 0x00,
+    .datatype   = 0x08
+  }
 };
 /* USER CODE END PV */
 
@@ -94,10 +102,10 @@ static USBD_CDC_LineCodingTypeDef line_coding =
 /* Create buffer for reception and transmission           */
 /* It's up to user to redefine and/or remove those define */
 /** Received data over USB are stored in this buffer      */
-uint8_t UserRxBufferFS[APP_RX_DATA_SIZE];
+uint8_t UserRxBufferFS[CDC_PORT_COUNT][APP_RX_DATA_SIZE];
 
 /** Data to send over USB CDC are stored in this buffer   */
-uint8_t UserTxBufferFS[APP_TX_DATA_SIZE];
+uint8_t UserTxBufferFS[CDC_PORT_COUNT][APP_TX_DATA_SIZE];
 
 /* USER CODE BEGIN PRIVATE_VARIABLES */
 
@@ -132,6 +140,7 @@ static int8_t CDC_DeInit_FS(void);
 static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length);
 static int8_t CDC_Receive_FS(uint8_t* pbuf, uint32_t *Len);
 static int8_t CDC_TransmitCplt_FS(uint8_t *pbuf, uint32_t *Len, uint8_t epnum);
+static void CDC_ArmReceive(uint8_t port);
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
 
@@ -151,6 +160,12 @@ USBD_CDC_ItfTypeDef USBD_Interface_fops_FS =
 };
 
 /* Private functions ---------------------------------------------------------*/
+static void CDC_ArmReceive(uint8_t port)
+{
+  (void)USBD_CDC_SetRxBufferPort(&hUsbDeviceFS, port, UserRxBufferFS[port]);
+  (void)USBD_CDC_ReceivePacketPort(&hUsbDeviceFS, port);
+}
+
 /**
   * @brief  Initializes the CDC media low layer over the FS USB IP
   * @retval USBD_OK if all operations are OK else USBD_FAIL
@@ -158,10 +173,11 @@ USBD_CDC_ItfTypeDef USBD_Interface_fops_FS =
 static int8_t CDC_Init_FS(void)
 {
   /* USER CODE BEGIN 3 */
-  /* Set Application Buffers */
-  USBD_CDC_SetTxBuffer(&hUsbDeviceFS, UserTxBufferFS, 0);
-  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, UserRxBufferFS);
-  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+  for (uint8_t port = 0U; port < CDC_PORT_COUNT; ++port)
+  {
+    (void)USBD_CDC_SetTxBufferPort(&hUsbDeviceFS, port, UserTxBufferFS[port], 0U);
+    CDC_ArmReceive(port);
+  }
   return (USBD_OK);
   /* USER CODE END 3 */
 }
@@ -186,83 +202,56 @@ static int8_t CDC_DeInit_FS(void)
   */
 static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 {
-  /* USER CODE BEGIN 5 */
+  uint8_t port = USBD_CDC_GetLastCmdPort(&hUsbDeviceFS);
+  if (port >= CDC_PORT_COUNT) { port = 0U; }
+
   switch(cmd)
   {
     case CDC_SEND_ENCAPSULATED_COMMAND:
-
-    break;
+      break;
 
     case CDC_GET_ENCAPSULATED_RESPONSE:
-
-    break;
+      break;
 
     case CDC_SET_COMM_FEATURE:
-
-    break;
-
     case CDC_GET_COMM_FEATURE:
-
-    break;
-
     case CDC_CLEAR_COMM_FEATURE:
+      break;
 
-    break;
-
-  /*******************************************************************************/
-  /* Line Coding Structure                                                       */
-  /*-----------------------------------------------------------------------------*/
-  /* Offset | Field       | Size | Value  | Description                          */
-  /* 0      | dwDTERate   |   4  | Number |Data terminal rate, in bits per second*/
-  /* 4      | bCharFormat |   1  | Number | Stop bits                            */
-  /*                                        0 - 1 Stop bit                       */
-  /*                                        1 - 1.5 Stop bits                    */
-  /*                                        2 - 2 Stop bits                      */
-  /* 5      | bParityType |  1   | Number | Parity                               */
-  /*                                        0 - None                             */
-  /*                                        1 - Odd                              */
-  /*                                        2 - Even                             */
-  /*                                        3 - Mark                             */
-  /*                                        4 - Space                            */
-  /* 6      | bDataBits  |   1   | Number Data bits (5, 6, 7, 8 or 16).          */
-  /*******************************************************************************/
     case CDC_SET_LINE_CODING:
-      line_coding.bitrate    =  (uint32_t)pbuf[0]
-                              | ((uint32_t)pbuf[1] << 8)
-                              | ((uint32_t)pbuf[2] << 16)
-                              | ((uint32_t)pbuf[3] << 24);
-      line_coding.format     = pbuf[4];
-      line_coding.paritytype = pbuf[5];
-      line_coding.datatype   = pbuf[6];
-    break;
+      line_coding[port].bitrate    =  (uint32_t)pbuf[0]
+                                    | ((uint32_t)pbuf[1] << 8)
+                                    | ((uint32_t)pbuf[2] << 16)
+                                    | ((uint32_t)pbuf[3] << 24);
+      line_coding[port].format     = pbuf[4];
+      line_coding[port].paritytype = pbuf[5];
+      line_coding[port].datatype   = pbuf[6];
+      break;
 
     case CDC_GET_LINE_CODING:
-      pbuf[0] = (uint8_t)(line_coding.bitrate);
-      pbuf[1] = (uint8_t)(line_coding.bitrate >> 8);
-      pbuf[2] = (uint8_t)(line_coding.bitrate >> 16);
-      pbuf[3] = (uint8_t)(line_coding.bitrate >> 24);
-      pbuf[4] = line_coding.format;
-      pbuf[5] = line_coding.paritytype;
-      pbuf[6] = line_coding.datatype;
-    break;
+      pbuf[0] = (uint8_t)(line_coding[port].bitrate);
+      pbuf[1] = (uint8_t)(line_coding[port].bitrate >> 8);
+      pbuf[2] = (uint8_t)(line_coding[port].bitrate >> 16);
+      pbuf[3] = (uint8_t)(line_coding[port].bitrate >> 24);
+      pbuf[4] = line_coding[port].format;
+      pbuf[5] = line_coding[port].paritytype;
+      pbuf[6] = line_coding[port].datatype;
+      break;
 
     case CDC_SET_CONTROL_LINE_STATE:
       if (length >= 2U)
       {
-        interface_usb_line_state_changed((uint16_t)pbuf[0] | ((uint16_t)pbuf[1] << 8));
+        uint16_t state = (uint16_t)pbuf[0] | ((uint16_t)pbuf[1] << 8);
+        interface_usb_line_state_changed(port, state);
       }
-    break;
+      break;
 
     case CDC_SEND_BREAK:
-
-    break;
-
-  default:
-    break;
+    default:
+      break;
   }
 
   return (USBD_OK);
-  /* USER CODE END 5 */
 }
 
 /**
@@ -282,12 +271,12 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
   */
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
-  /* USER CODE BEGIN 6 */
-  interface_usb_receive_callback(Buf, *Len);
-  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, UserRxBufferFS);
-  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+  uint8_t port = USBD_CDC_GetLastRxPort(&hUsbDeviceFS);
+  if (port >= CDC_PORT_COUNT) { port = 0U; }
+
+  interface_usb_receive_callback(port, Buf, *Len);
+  CDC_ArmReceive(port);
   return (USBD_OK);
-  /* USER CODE END 6 */
 }
 
 /**
@@ -303,16 +292,11 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
   */
 uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
 {
-  uint8_t result = USBD_OK;
-  /* USER CODE BEGIN 7 */
-  USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData;
-  if (hcdc->TxState != 0){
-    return USBD_BUSY;
+  if (USBD_CDC_SetTxBufferPort(&hUsbDeviceFS, 0U, Buf, Len) != USBD_OK)
+  {
+    return USBD_FAIL;
   }
-  USBD_CDC_SetTxBuffer(&hUsbDeviceFS, Buf, Len);
-  result = USBD_CDC_TransmitPacket(&hUsbDeviceFS);
-  /* USER CODE END 7 */
-  return result;
+  return USBD_CDC_TransmitPacketPort(&hUsbDeviceFS, 0U);
 }
 
 /**
@@ -329,13 +313,10 @@ uint8_t CDC_Transmit_FS(uint8_t* Buf, uint16_t Len)
   */
 static int8_t CDC_TransmitCplt_FS(uint8_t *Buf, uint32_t *Len, uint8_t epnum)
 {
-  uint8_t result = USBD_OK;
-  /* USER CODE BEGIN 13 */
-  UNUSED(Buf);
-  UNUSED(Len);
-  UNUSED(epnum);
-  /* USER CODE END 13 */
-  return result;
+  uint8_t port = USBD_CDC_GetLastTxPort(&hUsbDeviceFS);
+  if (port >= CDC_PORT_COUNT) { port = 0U; }
+  (void)Buf; (void)Len; (void)epnum; (void)port;
+  return (int8_t)USBD_OK;
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
