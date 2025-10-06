@@ -239,12 +239,31 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
       break;
 
     case CDC_SET_CONTROL_LINE_STATE:
+    {
+      uint16_t state = 0U;
       if (length >= 2U)
       {
-        uint16_t state = (uint16_t)pbuf[0] | ((uint16_t)pbuf[1] << 8);
-        interface_usb_line_state_changed(port, state);
+        state = (uint16_t)pbuf[0] | ((uint16_t)pbuf[1] << 8);
       }
+      else if (pbuf != NULL)
+      {
+        const USBD_SetupReqTypedef *setup = (const USBD_SetupReqTypedef *)pbuf;
+        state = setup->wValue;
+      }
+
+      uint16_t normalized = 0U;
+      if ((state & 0x0001U) != 0U || (state & 0x0100U) != 0U)
+      {
+        normalized |= 0x0001U;
+      }
+      if ((state & 0x0002U) != 0U || (state & 0x0200U) != 0U)
+      {
+        normalized |= 0x0002U;
+      }
+
+      interface_usb_line_state_changed(port, normalized);
       break;
+    }
 
     case CDC_SEND_BREAK:
     default:
